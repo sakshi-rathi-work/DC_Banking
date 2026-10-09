@@ -59,6 +59,8 @@ function generateAccountNumber(): string {
 
 /**
  * Create a new account for the authenticated user.
+ * Writes a CREATE_ACCOUNT entry to the replication log so accounts
+ * are propagated to follower nodes.
  */
 export async function createAccount(
   client: pg.PoolClient,
@@ -87,6 +89,44 @@ export async function createAccount(
         accountNumber,
         userId,
       });
+
+      // Append CREATE_ACCOUNT to replication log so follower nodes receive this account.
+      try {
+        const seqResult = await client.query<{ last_seq: number; node_id: number; epoch: number }>(
+          `UPDATE node_state SET last_seq = last_seq + 1, updated_at = now()
+           RETURNING last_seq, node_id, epoch`,
+        );
+        if (seqResult.rows.length > 0) {
+          const { last_seq: newSeq, node_id: nodeId, epoch } = seqResult.rows[0]!;
+          await client.query(
+            `INSERT INTO replication_log (seq, epoch, op_type, payload, lamport, origin_node, physical_ts)
+             VALUES ($1, $2, 'CREATE_ACCOUNT', $3::jsonb, 0, $4, now())`,
+            [
+              newSeq,
+              epoch,
+              JSON.stringify({
+                account: {
+                  id: row.id,
+                  userId: row.user_id,
+                  accountNumber: row.account_number,
+                  nickname: row.nickname,
+                  balancePaise: row.balance_paise,
+                  currency: row.currency,
+                  status: row.status,
+                  version: row.version,
+                  createdAt: row.created_at.toISOString(),
+                  updatedAt: row.created_at.toISOString(),
+                },
+              }),
+              nodeId,
+            ],
+          );
+        }
+      } catch (replErr) {
+        // Non-fatal — log a warning but don't abort account creation
+        logger.warn('Could not write CREATE_ACCOUNT to replication_log', { replErr });
+      }
+
       return toDto(row);
     } catch (err) {
       // Unique constraint on account_number — retry

@@ -16,6 +16,8 @@ import type { LogApplier } from '../replication/applier.js';
 import type { CatchupService } from '../replication/catchup.js';
 import type { SnapshotService } from '../replication/snapshot.js';
 import type { IntegrityChecker } from '../replication/integrity.js';
+import type { BerkeleyClockSync } from '../clock/berkeley-sync.js';
+import type { FaultManager } from '../cluster/fault-manager.js';
 
 export interface CreateGrpcServerOptions {
   pool: pg.Pool;
@@ -39,6 +41,8 @@ export interface CreateGrpcServerOptions {
   failureDetector?: FailureDetector;
   eventSink?: EventSink;
   rpcTraceBuffer?: RpcTraceBuffer;
+  berkeleySync?: BerkeleyClockSync;
+  faultManager?: FaultManager;
 }
 
 /**
@@ -71,6 +75,7 @@ export function createGrpcServer(opts: CreateGrpcServerOptions): Server {
       applier: opts.applier,
       catchupService: opts.catchupService,
       snapshotService: opts.snapshotService,
+      berkeleySync: opts.berkeleySync,
     });
     server.addService(clusterServiceDef, clusterHandlers);
 
@@ -91,6 +96,8 @@ export function createGrpcServer(opts: CreateGrpcServerOptions): Server {
       rpcTraceBuffer: opts.rpcTraceBuffer,
       replicator: opts.replicator,
       integrityChecker: opts.integrityChecker,
+      berkeleySync: opts.berkeleySync,
+      pool: opts.pool,
     });
     server.addService(observabilityServiceDef, observabilityHandlers);
 
@@ -103,9 +110,15 @@ export function createGrpcServer(opts: CreateGrpcServerOptions): Server {
         nodeId: opts.nodeId,
         clock: opts.clock,
         electionManager: opts.electionManager,
+        faultManager: opts.faultManager,
+        berkeleySync: opts.berkeleySync,
+        peerManager: opts.peerManager,
         onConfigChange: (cfg) => {
           if (cfg.consistencyMode && opts.replicator) {
             opts.replicator.setConsistencyMode(cfg.consistencyMode.toLowerCase() as 'strong' | 'eventual');
+          }
+          if (cfg.replicationDelayMs !== undefined && opts.replicator) {
+            opts.replicator.setReplicationDelayMs(cfg.replicationDelayMs);
           }
         },
       });

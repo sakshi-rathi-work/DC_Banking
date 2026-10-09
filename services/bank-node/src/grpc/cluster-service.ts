@@ -7,6 +7,7 @@ import type { CatchupService } from '../replication/catchup.js';
 import type { SnapshotService } from '../replication/snapshot.js';
 import type { AppendEntriesReq } from '../replication/types.js';
 import type { ElectionMsgPayload, CoordinatorMsgPayload, RingTokenPayload, RingCoordinatorPayload } from '../election/types.js';
+import type { BerkeleyClockSync } from '../clock/berkeley-sync.js';
 
 export interface ClusterServiceOptions {
   nodeId: number;
@@ -17,10 +18,11 @@ export interface ClusterServiceOptions {
   applier?: LogApplier;
   catchupService?: CatchupService;
   snapshotService?: SnapshotService;
+  berkeleySync?: BerkeleyClockSync;
 }
 
 export function createClusterServiceHandlers(opts: ClusterServiceOptions) {
-  const { nodeId, getEpoch, clock, failureDetector, electionManager, applier, catchupService, snapshotService } = opts;
+  const { nodeId, getEpoch, clock, failureDetector, electionManager, applier, catchupService, snapshotService, berkeleySync } = opts;
 
   return {
     Heartbeat: withGrpcInterceptors(
@@ -155,13 +157,31 @@ export function createClusterServiceHandlers(opts: ClusterServiceOptions) {
       }
     },
 
-    // Stubs for Berkeley clock sync
-    GetTime: withGrpcInterceptors((_call, callback) => {
-      callback({ code: grpc.status.UNIMPLEMENTED, details: 'GetTime RPC not yet active' }, null);
-    }, clock),
+    // Berkeley clock sync — real implementations
+    GetTime: withGrpcInterceptors(
+      (_call: grpc.ServerUnaryCall<{ roundId?: string }, unknown>, callback: grpc.sendUnaryData<unknown>) => {
+        if (!berkeleySync) {
+          // Fallback: return raw Date.now() in microseconds
+          callback(null, { syncedTimeUs: Date.now() * 1000 });
+          return;
+        }
+        const syncedTimeUs = Number(berkeleySync.getSyncedTimeUs());
+        callback(null, { syncedTimeUs });
+      },
+      clock,
+    ),
 
-    AdjustClock: withGrpcInterceptors((_call, callback) => {
-      callback({ code: grpc.status.UNIMPLEMENTED, details: 'AdjustClock RPC not yet active' }, null);
-    }, clock),
+    AdjustClock: withGrpcInterceptors(
+      (call: grpc.ServerUnaryCall<{ roundId?: string; adjustMs?: number }, unknown>, callback: grpc.sendUnaryData<unknown>) => {
+        if (!berkeleySync) {
+          callback(null, { adjustmentBeforeMs: 0, adjustmentAfterMs: 0 });
+          return;
+        }
+        const adjustMs = call.request?.adjustMs ?? 0;
+        const { before, after } = berkeleySync.setAdjustmentMs(adjustMs);
+        callback(null, { adjustmentBeforeMs: before, adjustmentAfterMs: after });
+      },
+      clock,
+    ),
   };
 }

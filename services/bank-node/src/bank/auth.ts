@@ -22,6 +22,7 @@ export interface AuthResult {
  * Register a new user.
  * - Hashes password in worker thread (bcrypt cost 10).
  * - Inserts user row.
+ * - Appends CREATE_USER to replication_log so user is replicated to all nodes.
  * - Returns user info + JWT.
  */
 export async function register(
@@ -35,30 +36,77 @@ export async function register(
   const passwordHash = await hashPassword(password);
 
   const userId = randomUUID();
+  const normalizedEmail = email.toLowerCase().trim();
 
+  const client = await pool.connect();
   try {
-    await pool.query(
-      `INSERT INTO users (id, name, email, password_hash) VALUES ($1, $2, $3, $4)`,
-      [userId, name, email.toLowerCase().trim(), passwordHash],
-    );
-  } catch (err) {
-    // Unique constraint violation on email
-    if (err && typeof err === 'object' && (err as { code?: string }).code === '23505') {
-      throw new AppError('EMAIL_TAKEN', 'Email is already registered.');
+    await client.query('BEGIN');
+
+    try {
+      await client.query(
+        `INSERT INTO users (id, name, email, password_hash) VALUES ($1, $2, $3, $4)`,
+        [userId, name, normalizedEmail, passwordHash],
+      );
+    } catch (err) {
+      // Unique constraint violation on email
+      if (err && typeof err === 'object' && (err as { code?: string }).code === '23505') {
+        await client.query('ROLLBACK');
+        throw new AppError('EMAIL_TAKEN', 'Email is already registered.');
+      }
+      throw err;
     }
+
+    // Append CREATE_USER to replication log so user row propagates to all follower nodes.
+    // If node_state doesn't exist yet (e.g. solo dev boot), skip gracefully.
+    try {
+      const seqResult = await client.query<{ last_seq: number; node_id: number; epoch: number }>(
+        `UPDATE node_state SET last_seq = last_seq + 1, updated_at = now()
+         RETURNING last_seq, node_id, epoch`,
+      );
+      if (seqResult.rows.length > 0) {
+        const { last_seq: newSeq, node_id: nodeId, epoch } = seqResult.rows[0]!;
+        await client.query(
+          `INSERT INTO replication_log (seq, epoch, op_type, payload, lamport, origin_node, physical_ts)
+           VALUES ($1, $2, 'CREATE_USER', $3::jsonb, 0, $4, now())`,
+          [
+            newSeq,
+            epoch,
+            JSON.stringify({
+              user: {
+                id: userId,
+                name,
+                email: normalizedEmail,
+                passwordHash,
+                createdAt: new Date().toISOString(),
+              },
+            }),
+            nodeId,
+          ],
+        );
+      }
+    } catch (replErr) {
+      // Non-fatal: replication log write failed (initial boot before node_state)
+      logger.warn('Could not write CREATE_USER to replication_log', { replErr });
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* ignore */ }
     throw err;
+  } finally {
+    client.release();
   }
 
   const token = jwt.sign(
-    { sub: userId, email: email.toLowerCase().trim() },
+    { sub: userId, email: normalizedEmail },
     jwtSecret,
     { expiresIn: JWT_EXPIRY },
   );
 
-  logger.info('User registered', { userId, email: email.toLowerCase().trim() });
+  logger.info('User registered', { userId, email: normalizedEmail });
 
   return {
-    user: { id: userId, name, email: email.toLowerCase().trim() },
+    user: { id: userId, name, email: normalizedEmail },
     token,
   };
 }

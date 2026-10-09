@@ -39,15 +39,15 @@ for (const protoFile of protoFiles) {
   console.log(`  Processing ${baseName}.proto...`);
 
   const cmd = [
-    genTypesPath,
+    `"${genTypesPath}"`,
     `--longs=Number`,
     `--enums=String`,
     `--defaults`,
     `--oneofs`,
     `--grpcLib=@grpc/grpc-js`,
-    `-I ${PROTO_DIR}`,
-    `-O ${OUT_DIR}`,
-    protoFile,
+    `-I "${PROTO_DIR}"`,
+    `-O "${OUT_DIR}"`,
+    `"${protoFile}"`,
   ].join(' ');
 
   try {

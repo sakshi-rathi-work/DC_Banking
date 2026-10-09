@@ -16,6 +16,7 @@ export function createSuccessEnvelope<T>(
   opts: EnvelopeMetaOptions = {},
 ) {
   return {
+    success: true,
     data,
     meta: {
       requestId: req.requestId ?? 'unknown',

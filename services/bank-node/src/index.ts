@@ -18,6 +18,9 @@ import { LogApplier } from './replication/applier.js';
 import { CatchupService } from './replication/catchup.js';
 import { SnapshotService } from './replication/snapshot.js';
 import { IntegrityChecker } from './replication/integrity.js';
+import { SimulatedHwClock } from './clock/simulated-hw-clock.js';
+import { BerkeleyClockSync } from './clock/berkeley-sync.js';
+import { lagMonitor } from './concurrency/lag-monitor.js';
 
 const NodeConfigSchema = z.object({
   NODE_ID: z.coerce.number().default(1),
@@ -52,6 +55,8 @@ let applier: LogApplier | null = null;
 let catchupService: CatchupService | null = null;
 let snapshotService: SnapshotService | null = null;
 let integrityChecker: IntegrityChecker | null = null;
+let berkeleySync: BerkeleyClockSync | null = null;
+let hwClock: SimulatedHwClock | null = null;
 
 const rpcTraceBuffer = new RpcTraceBuffer(500);
 
@@ -181,6 +186,17 @@ async function start() {
   snapshotService = new SnapshotService(pool);
   integrityChecker = new IntegrityChecker(pool, config.NODE_ID);
 
+  // Physical clock simulation + Berkeley sync
+  hwClock = new SimulatedHwClock({
+    initialClockSkewMs: config.INITIAL_CLOCK_SKEW_MS,
+    clockDriftPpm: config.CLOCK_DRIFT_PPM,
+  });
+  berkeleySync = new BerkeleyClockSync({
+    nodeId: config.NODE_ID,
+    hwClock,
+    peerManager,
+  });
+
   const stateProvider = {
     getNodeId: () => config.NODE_ID,
     getRole: () => (isLeader() ? 'LEADER' : 'FOLLOWER'),
@@ -190,7 +206,7 @@ async function start() {
     getElectionAlgorithm: () => electionManager?.getAlgorithm() || config.ELECTION_ALGORITHM,
     getConsistencyMode: () => replicator?.getConsistencyMode() || config.CONSISTENCY_MODE,
     getActiveRequests: () => 0,
-    getEventLoopLagMs: () => 0,
+    getEventLoopLagMs: () => Math.round(lagMonitor.getP99Ms() * 100) / 100,
   };
 
   heartbeatLoop = new HeartbeatLoop(peerManager, failureDetector, clock, stateProvider, 1000);
@@ -217,6 +233,7 @@ async function start() {
     failureDetector,
     eventSink,
     rpcTraceBuffer,
+    berkeleySync,
   });
   grpcServer = server;
 
@@ -232,12 +249,16 @@ async function start() {
     );
   });
 
+  lagMonitor.start();
   heartbeatLoop.start();
 
   // Initiate initial election on startup to elect cluster leader cleanly
   setTimeout(() => {
     electionManager?.initiateElection('COLD_START');
   }, 500);
+
+  // Start periodic Berkeley clock sync (leader will run sync rounds)
+  berkeleySync?.startPeriodicSync(10000);
 
   await eventSink.logEvent({
     service: 'bank-node',
@@ -258,6 +279,7 @@ start().catch((err) => {
 async function shutdown() {
   logger.info('Shutting down bank-node...');
   isHealthy = false;
+  lagMonitor.stop();
   healthServer.close();
   if (heartbeatLoop) {
     heartbeatLoop.stop();

@@ -20,10 +20,13 @@ interface ObservabilityClientInstance {
   getRpcTrace: (req: unknown, callback: (err: grpc.ServiceError | null, res: unknown) => void) => void;
   getReplicationState: (req: unknown, callback: (err: grpc.ServiceError | null, res: unknown) => void) => void;
   getIntegrity: (req: unknown, callback: (err: grpc.ServiceError | null, res: unknown) => void) => void;
+  getElections: (req: unknown, callback: (err: grpc.ServiceError | null, res: unknown) => void) => void;
+  getClockState: (req: unknown, callback: (err: grpc.ServiceError | null, res: unknown) => void) => void;
+  getClockHistory: (req: unknown, callback: (err: grpc.ServiceError | null, res: unknown) => void) => void;
   close: () => void;
 }
 
-let clientInstance: ObservabilityClientInstance | null = null;
+const clientPool = new Map<string, ObservabilityClientInstance>();
 
 function getDefaultTarget(): string {
   if (process.env.NODE1_TARGET) return process.env.NODE1_TARGET;
@@ -35,7 +38,8 @@ function getDefaultTarget(): string {
 }
 
 function getClient(target = getDefaultTarget()): ObservabilityClientInstance {
-  if (!clientInstance) {
+  let client = clientPool.get(target);
+  if (!client) {
     const packageDef = protoLoader.loadSync(path.join(PROTO_DIR, 'observability.proto'), {
       keepCase: false,
       longs: Number,
@@ -49,10 +53,11 @@ function getClient(target = getDefaultTarget()): ObservabilityClientInstance {
       bank: { v1: { ObservabilityService: ServiceConstructor } };
     };
     const ObservabilityService = proto.bank.v1.ObservabilityService;
-    clientInstance = new ObservabilityService(target, grpc.credentials.createInsecure());
+    client = new ObservabilityService(target, grpc.credentials.createInsecure());
+    clientPool.set(target, client);
     logger.info(`Observability gRPC client connected to ${target}`);
   }
-  return clientInstance;
+  return client;
 }
 
 export class ObservabilityGrpcClient {
@@ -100,6 +105,36 @@ export class ObservabilityGrpcClient {
     const client = getClient(targetNode);
     return new Promise((resolve, reject) => {
       client.getIntegrity({}, (err, res) => {
+        if (err) return reject(AppError.fromGrpcError(err));
+        resolve(res);
+      });
+    });
+  }
+
+  static async getElections(limit = 20, targetNode?: string) {
+    const client = getClient(targetNode);
+    return new Promise((resolve, reject) => {
+      client.getElections({ limit }, (err, res) => {
+        if (err) return reject(AppError.fromGrpcError(err));
+        resolve(res);
+      });
+    });
+  }
+
+  static async getClockState(targetNode?: string) {
+    const client = getClient(targetNode);
+    return new Promise((resolve, reject) => {
+      client.getClockState({}, (err, res) => {
+        if (err) return reject(AppError.fromGrpcError(err));
+        resolve(res);
+      });
+    });
+  }
+
+  static async getClockHistory(limit = 10, targetNode?: string) {
+    const client = getClient(targetNode);
+    return new Promise((resolve, reject) => {
+      client.getClockHistory({ limit }, (err, res) => {
         if (err) return reject(AppError.fromGrpcError(err));
         resolve(res);
       });

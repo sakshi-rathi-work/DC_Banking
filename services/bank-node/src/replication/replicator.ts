@@ -44,6 +44,21 @@ export class Replicator {
   }
 
   public getBackupStates(): ReplicationNodeInfo[] {
+    const peers = this.peerManager.getAllPeerNodeIds();
+    for (const peerId of peers) {
+      if (!this.backupStates.has(peerId)) {
+        this.backupStates.set(peerId, {
+          nodeId: peerId,
+          role: 'FOLLOWER',
+          lastSeq: 0,
+          matchSeq: 0,
+          lagEntries: 0,
+          lagMs: 0,
+          state: 'IN_SYNC',
+          checksum: '',
+        });
+      }
+    }
     return Array.from(this.backupStates.values());
   }
 

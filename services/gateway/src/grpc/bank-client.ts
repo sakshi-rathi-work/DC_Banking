@@ -23,7 +23,9 @@ interface BankServiceClientInstance {
   close: () => void;
 }
 
-let clientInstance: BankServiceClientInstance | null = null;
+import { LoadBalancer } from '../loadbalancer/load-balancer.js';
+
+const clients = new Map<string, BankServiceClientInstance>();
 
 function getDefaultTarget(): string {
   if (process.env.NODE1_TARGET) {
@@ -39,7 +41,8 @@ function getDefaultTarget(): string {
 }
 
 function getClient(target = getDefaultTarget()): BankServiceClientInstance {
-  if (!clientInstance) {
+  let client = clients.get(target);
+  if (!client) {
     const packageDef = protoLoader.loadSync(path.join(PROTO_DIR, 'bank.proto'), {
       keepCase: false,
       longs: Number,
@@ -53,16 +56,18 @@ function getClient(target = getDefaultTarget()): BankServiceClientInstance {
       bank: { v1: { BankService: ServiceConstructor } };
     };
     const BankService = proto.bank.v1.BankService;
-    clientInstance = new BankService(target, grpc.credentials.createInsecure());
+    client = new BankService(target, grpc.credentials.createInsecure());
+    clients.set(target, client);
     logger.info(`gRPC client connected to ${target}`);
   }
-  return clientInstance;
+  return client;
 }
 
 export function setGrpcTarget(target: string): void {
-  if (clientInstance) {
-    clientInstance.close();
-    clientInstance = null;
+  const existing = clients.get(target);
+  if (existing) {
+    existing.close();
+    clients.delete(target);
   }
   getClient(target);
 }
@@ -73,22 +78,47 @@ function callWithRetry<TRes = Record<string, unknown>>(
   isIdempotent = false,
   targetNode?: string,
 ): Promise<TRes> {
-  return executeWithRetry<TRes>(
-    () => {
-      const client = getClient(targetNode);
-      return new Promise<TRes>((resolve, reject) => {
-        const fn = client[methodName];
-        if (!fn) {
-          return reject(new AppError('INTERNAL', `gRPC method ${methodName} not found.`));
-        }
+  const lb = LoadBalancer.getInstance();
 
-        fn.call(client, request, (err: grpc.ServiceError | null, response: unknown) => {
-          if (!err) {
-            return resolve(response as TRes);
+  return executeWithRetry<TRes>(
+    async (attempt: number) => {
+      if (attempt > 1) {
+        lb.recordRetry();
+      }
+
+      if (targetNode) {
+        const client = getClient(targetNode);
+        return new Promise<TRes>((resolve, reject) => {
+          const fn = client[methodName];
+          if (!fn) {
+            return reject(new AppError('INTERNAL', `gRPC method ${methodName} not found.`));
           }
-          reject(AppError.fromGrpcError(err));
+          fn.call(client, request, (err: grpc.ServiceError | null, response: unknown) => {
+            if (!err) {
+              return resolve(response as TRes);
+            }
+            reject(AppError.fromGrpcError(err));
+          });
+        });
+      }
+
+      const { result } = await lb.execute(async (node) => {
+        const client = getClient(node.address);
+        return new Promise<TRes>((resolve, reject) => {
+          const fn = client[methodName];
+          if (!fn) {
+            return reject(new AppError('INTERNAL', `gRPC method ${methodName} not found.`));
+          }
+          fn.call(client, request, (err: grpc.ServiceError | null, response: unknown) => {
+            if (!err) {
+              return resolve(response as TRes);
+            }
+            reject(AppError.fromGrpcError(err));
+          });
         });
       });
+
+      return result;
     },
     { isIdempotent, maxAttempts: 5, maxBudgetMs: 12000 },
   );

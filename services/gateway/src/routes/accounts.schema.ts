@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const createAccountSchema = z.object({
   nickname: z.string().optional(),
+  initialDepositPaise: z.number().int().min(0).optional(),
 });
 
 export const lookupAccountSchema = z.object({

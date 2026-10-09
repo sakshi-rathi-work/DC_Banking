@@ -13,6 +13,7 @@ import { createTransactionsRouter } from './routes/transactions.routes.js';
 import { systemRouter } from './routes/system.routes.js';
 import { labRouter } from './routes/lab.routes.js';
 import { createDocsRouter } from './openapi/docs.routes.js';
+import { concurrencyRouter } from './routes/lab-concurrency.routes.js';
 
 
 
@@ -34,6 +35,7 @@ const logger = createLogger({ service: 'gateway' });
 
 const app = express();
 
+app.set('trust proxy', 1); // Trust first proxy (nginx in Docker)
 app.use(helmet({ contentSecurityPolicy: false })); // Allow Swagger UI inline scripts
 app.use(cors());
 app.use(express.json());
@@ -61,13 +63,33 @@ const requireAuth = createAuthMiddleware(config.JWT_SECRET);
 app.use('/api/auth', createAuthRouter(requireAuth));
 app.use('/api/accounts', createAccountsRouter(requireAuth));
 app.use('/api/transactions', createTransactionsRouter(requireAuth));
+// Lab mode middleware (Task 11.5)
+const labModeMiddleware: express.RequestHandler = (_req, res, next) => {
+  if (!config.LAB_MODE) {
+    res.status(404).json({
+      success: false,
+      error: {
+        code: 'LAB_DISABLED',
+        message: 'Lab endpoints are disabled in production mode (LAB_MODE=false)',
+      },
+    });
+    return;
+  }
+  next();
+};
+
 app.use('/api/system', systemRouter);
-app.use('/api/lab', labRouter);
+app.use('/api/lab/concurrency', labModeMiddleware, concurrencyRouter);
+app.use('/api/lab', labModeMiddleware, labRouter);
 
 
+import { LoadBalancer } from './loadbalancer/load-balancer.js';
 
 // Global Error Handler
 app.use(errorHandler);
+
+const lb = LoadBalancer.getInstance({ gatewayNodes: config.GATEWAY_NODES });
+lb.start();
 
 const server = app.listen(config.PORT, '0.0.0.0', () => {
   logger.info(`Gateway service listening on port ${config.PORT}`);
@@ -75,6 +97,7 @@ const server = app.listen(config.PORT, '0.0.0.0', () => {
 
 function shutdown() {
   logger.info('Shutting down gateway...');
+  lb.stop();
   server.close(() => {
     process.exit(0);
   });
@@ -82,3 +105,4 @@ function shutdown() {
 
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
+

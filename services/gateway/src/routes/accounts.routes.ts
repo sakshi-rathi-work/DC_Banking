@@ -18,13 +18,33 @@ export function createAccountsRouter(requireAuth: RequestHandler): Router {
     validateRequest({ body: createAccountSchema, requireIdempotencyKey: true }),
     async (req, res, next) => {
       try {
-        const { nickname } = req.body;
+        const { nickname, initialDepositPaise } = req.body;
         const result = await BankGrpcClient.createAccount(
           req.userId!,
           nickname,
           req.idempotencyKey!,
           req.requestId,
         );
+
+        // Auto-deposit initial amount if provided and > 0
+        if (initialDepositPaise && initialDepositPaise > 0 && result.id) {
+          try {
+            await BankGrpcClient.deposit(
+              req.userId!,
+              result.id,
+              initialDepositPaise,
+              'Initial deposit',
+              `${req.idempotencyKey!}-init-deposit`,
+              req.requestId,
+            );
+            // Refetch updated balance
+            const updated = await BankGrpcClient.getAccount(req.userId!, result.id, req.requestId);
+            return res.status(201).json(createSuccessEnvelope(updated, req));
+          } catch {
+            // Initial deposit failed — still return the created account
+          }
+        }
+
         res.status(201).json(createSuccessEnvelope(result, req));
       } catch (err) {
         next(err);
@@ -35,7 +55,7 @@ export function createAccountsRouter(requireAuth: RequestHandler): Router {
   router.get('/', async (req, res, next) => {
     try {
       const result = await BankGrpcClient.listAccounts(req.userId!, req.requestId);
-      res.status(200).json(createSuccessEnvelope(result.accounts ?? [], req));
+      res.status(200).json(createSuccessEnvelope({ accounts: result.accounts ?? [] }, req));
     } catch (err) {
       next(err);
     }
