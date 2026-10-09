@@ -1,0 +1,223 @@
+services:
+  # ================================================================
+  # Databases (One independent PostgreSQL instance per bank node)
+  # ================================================================
+  db-1:
+    image: postgres:16-alpine
+    container_name: dbs-db-1
+    environment:
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: bank_pw_dev
+      POSTGRES_DB: bank
+    ports:
+      - "${DB1_HOST_PORT:-5441}:5432"
+    volumes:
+      - db1-data:/var/lib/postgresql/data
+    networks:
+      - bank-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bank -d bank"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  db-2:
+    image: postgres:16-alpine
+    container_name: dbs-db-2
+    environment:
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: bank_pw_dev
+      POSTGRES_DB: bank
+    ports:
+      - "${DB2_HOST_PORT:-5442}:5432"
+    volumes:
+      - db2-data:/var/lib/postgresql/data
+    networks:
+      - bank-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bank -d bank"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  db-3:
+    image: postgres:16-alpine
+    container_name: dbs-db-3
+    environment:
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: bank_pw_dev
+      POSTGRES_DB: bank
+    ports:
+      - "${DB3_HOST_PORT:-5443}:5432"
+    volumes:
+      - db3-data:/var/lib/postgresql/data
+    networks:
+      - bank-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bank -d bank"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  # ================================================================
+  # Peer Bank Nodes (gRPC :50051, HTTP health :9000/healthz)
+  # ================================================================
+  bank-node-1:
+    build:
+      context: .
+      dockerfile: docker/bank-node.Dockerfile
+    container_name: dbs-bank-node-1
+    environment:
+      NODE_ID: 1
+      NODE_PRIORITY: 1
+      PEERS: "1=bank-node-1:50051,2=bank-node-2:50051,3=bank-node-3:50051"
+      DATABASE_URL: "postgres://bank:bank_pw_dev@db-1:5432/bank"
+      JWT_SECRET: "${JWT_SECRET:-dev-dbs-jwt-secret-key-change-in-prod}"
+      LAB_MODE: "${LAB_MODE:-true}"
+      ELECTION_ALGORITHM: "bully"
+      CONSISTENCY_MODE: "strong"
+      PREEMPT_ON_RECOVERY: "true"
+      INITIAL_CLOCK_SKEW_MS: "3000"
+      CLOCK_DRIFT_PPM: "2000"
+      HEALTH_PORT: 9000
+      GRPC_PORT: 50051
+    ports:
+      - "${NODE1_GRPC_HOST_PORT:-50051}:50051"
+    depends_on:
+      db-1:
+        condition: service_healthy
+    networks:
+      - bank-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9000/healthz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  bank-node-2:
+    build:
+      context: .
+      dockerfile: docker/bank-node.Dockerfile
+    container_name: dbs-bank-node-2
+    environment:
+      NODE_ID: 2
+      NODE_PRIORITY: 2
+      PEERS: "1=bank-node-1:50051,2=bank-node-2:50051,3=bank-node-3:50051"
+      DATABASE_URL: "postgres://bank:bank_pw_dev@db-2:5432/bank"
+      JWT_SECRET: "${JWT_SECRET:-dev-dbs-jwt-secret-key-change-in-prod}"
+      LAB_MODE: "${LAB_MODE:-true}"
+      ELECTION_ALGORITHM: "bully"
+      CONSISTENCY_MODE: "strong"
+      PREEMPT_ON_RECOVERY: "true"
+      INITIAL_CLOCK_SKEW_MS: "-2000"
+      CLOCK_DRIFT_PPM: "-1500"
+      HEALTH_PORT: 9000
+      GRPC_PORT: 50051
+    ports:
+      - "${NODE2_GRPC_HOST_PORT:-50052}:50051"
+    depends_on:
+      db-2:
+        condition: service_healthy
+    networks:
+      - bank-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9000/healthz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  bank-node-3:
+    build:
+      context: .
+      dockerfile: docker/bank-node.Dockerfile
+    container_name: dbs-bank-node-3
+    environment:
+      NODE_ID: 3
+      NODE_PRIORITY: 3
+      PEERS: "1=bank-node-1:50051,2=bank-node-2:50051,3=bank-node-3:50051"
+      DATABASE_URL: "postgres://bank:bank_pw_dev@db-3:5432/bank"
+      JWT_SECRET: "${JWT_SECRET:-dev-dbs-jwt-secret-key-change-in-prod}"
+      LAB_MODE: "${LAB_MODE:-true}"
+      ELECTION_ALGORITHM: "bully"
+      CONSISTENCY_MODE: "strong"
+      PREEMPT_ON_RECOVERY: "true"
+      INITIAL_CLOCK_SKEW_MS: "500"
+      CLOCK_DRIFT_PPM: "500"
+      HEALTH_PORT: 9000
+      GRPC_PORT: 50051
+    ports:
+      - "${NODE3_GRPC_HOST_PORT:-50053}:50051"
+    depends_on:
+      db-3:
+        condition: service_healthy
+    networks:
+      - bank-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9000/healthz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  # ================================================================
+  # REST Gateway (:8080)
+  # ================================================================
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/gateway.Dockerfile
+    container_name: dbs-gateway
+    environment:
+      PORT: 8080
+      GATEWAY_NODES: "1=bank-node-1:50051,2=bank-node-2:50051,3=bank-node-3:50051"
+      JWT_SECRET: "${JWT_SECRET:-dev-dbs-jwt-secret-key-change-in-prod}"
+      LAB_MODE: "${LAB_MODE:-true}"
+    ports:
+      - "${GATEWAY_HOST_PORT:-8080}:8080"
+    depends_on:
+      bank-node-1:
+        condition: service_started
+      bank-node-2:
+        condition: service_started
+      bank-node-3:
+        condition: service_started
+    networks:
+      - bank-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/health || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ================================================================
+  # Frontend UI (:3000)
+  # ================================================================
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    container_name: dbs-frontend
+    ports:
+      - "${FRONTEND_HOST_PORT:-3000}:80"
+    depends_on:
+      gateway:
+        condition: service_started
+    networks:
+      - bank-net
+    restart: unless-stopped
+
+volumes:
+  db1-data:
+  db2-data:
+  db3-data:
+
+networks:
+  bank-net:
+    driver: bridge

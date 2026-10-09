@@ -1,0 +1,277 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Distributed Banking System (DBS) REST Gateway API",
+    "version": "1.0.0",
+    "description": "High-throughput, fault-tolerant distributed banking platform REST API."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080/api",
+      "description": "Local API Gateway"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      },
+      "idempotencyKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Idempotency-Key",
+        "description": "Unique UUID key (16-64 chars) required for state-mutating requests"
+      }
+    },
+    "schemas": {
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "email": { "type": "string", "format": "email" }
+        }
+      },
+      "Account": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "accountNumber": { "type": "string", "example": "402918374655" },
+          "nickname": { "type": "string" },
+          "balancePaise": { "type": "integer", "example": 10000 },
+          "currency": { "type": "string", "example": "INR" },
+          "status": { "type": "string", "enum": ["ACTIVE", "FROZEN", "CLOSED"] },
+          "version": { "type": "integer" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Transaction": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "reference": { "type": "string", "example": "TXN-20261009-ABCDE" },
+          "type": { "type": "string", "enum": ["DEPOSIT", "WITHDRAWAL", "TRANSFER"] },
+          "status": { "type": "string", "enum": ["COMMITTED", "REJECTED"] },
+          "rejectReason": { "type": "string" },
+          "sourceAccountId": { "type": "string", "format": "uuid" },
+          "destinationAccountId": { "type": "string", "format": "uuid" },
+          "amountPaise": { "type": "integer" },
+          "sourceBalanceAfter": { "type": "integer" },
+          "destinationBalanceAfter": { "type": "integer" },
+          "note": { "type": "string" },
+          "physicalTs": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "type": "string" },
+              "message": { "type": "string" },
+              "details": { "type": "object" },
+              "retryable": { "type": "boolean" }
+            }
+          },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "requestId": { "type": "string" },
+              "lamport": { "type": "integer" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Gateway health check",
+        "responses": {
+          "200": { "description": "Gateway is operational" }
+        }
+      }
+    },
+    "/auth/register": {
+      "post": {
+        "summary": "Register a new user",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "email", "password"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string", "minLength": 8 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "User created" },
+          "400": { "description": "Validation error" },
+          "409": { "description": "Email already taken" }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "summary": "Authenticate user",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Authenticated" },
+          "401": { "description": "Invalid credentials" }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "summary": "Get authenticated user profile",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Profile info" },
+          "401": { "description": "Unauthenticated" }
+        }
+      }
+    },
+    "/accounts": {
+      "post": {
+        "summary": "Create a new bank account",
+        "security": [{ "bearerAuth": [] }, { "idempotencyKey": [] }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "nickname": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Account created" },
+          "400": { "description": "Missing Idempotency-Key" }
+        }
+      },
+      "get": {
+        "summary": "List accounts owned by user",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "List of accounts" }
+        }
+      }
+    },
+    "/accounts/lookup": {
+      "get": {
+        "summary": "Lookup account holder name by 12-digit number",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "accountNumber", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Account lookup result" },
+          "404": { "description": "Account not found" }
+        }
+      }
+    },
+    "/accounts/{id}": {
+      "get": {
+        "summary": "Get account details by ID",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": { "description": "Account details" },
+          "403": { "description": "Not owned by user" },
+          "404": { "description": "Account not found" }
+        }
+      }
+    },
+    "/accounts/{id}/statement.csv": {
+      "get": {
+        "summary": "Download transaction statement CSV",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "fromDate", "in": "query", "schema": { "type": "string" } },
+          { "name": "toDate", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "CSV file stream" }
+        }
+      }
+    },
+    "/transactions/deposit": {
+      "post": {
+        "summary": "Deposit funds into account",
+        "security": [{ "bearerAuth": [] }, { "idempotencyKey": [] }],
+        "responses": {
+          "201": { "description": "Deposit completed" }
+        }
+      }
+    },
+    "/transactions/withdraw": {
+      "post": {
+        "summary": "Withdraw funds from account",
+        "security": [{ "bearerAuth": [] }, { "idempotencyKey": [] }],
+        "responses": {
+          "201": { "description": "Withdrawal completed" },
+          "422": { "description": "Insufficient funds" }
+        }
+      }
+    },
+    "/transactions/transfer": {
+      "post": {
+        "summary": "Transfer funds between accounts",
+        "security": [{ "bearerAuth": [] }, { "idempotencyKey": [] }],
+        "responses": {
+          "201": { "description": "Transfer completed" },
+          "422": { "description": "Insufficient funds or account inactive" }
+        }
+      }
+    },
+    "/transactions": {
+      "get": {
+        "summary": "List transaction history",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Transaction history" }
+        }
+      }
+    },
+    "/transactions/{id}": {
+      "get": {
+        "summary": "Get transaction details by ID",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Transaction info" }
+        }
+      }
+    }
+  }
+}

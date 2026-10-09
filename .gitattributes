@@ -1,0 +1,6 @@
+# Force LF for shell scripts, Dockerfiles, SQL migrations, and entrypoints to prevent CRLF breaking Linux containers
+*.sh text eol=lf
+Dockerfile* text eol=lf
+*.Dockerfile text eol=lf
+*.sql text eol=lf
+entrypoint*.sh text eol=lf

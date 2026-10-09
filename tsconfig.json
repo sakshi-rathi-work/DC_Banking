@@ -1,0 +1,8 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/shared" },
+    { "path": "./services/bank-node" },
+    { "path": "./services/gateway" }
+  ]
+}

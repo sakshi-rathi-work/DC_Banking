@@ -1,0 +1,42 @@
+{
+  "name": "distributed-banking-system",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "frontend"
+  ],
+  "scripts": {
+    "proto:gen": "tsx scripts/proto-gen.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:distributed": "vitest run --config vitest.distributed.config.ts",
+    "test:concurrency": "vitest run -t \"concurrency|race|crossfire|duplicate\"",
+    "lint": "eslint . --ext .ts,.tsx",
+    "typecheck": "tsc -b",
+    "seed": "tsx scripts/seed-demo.ts",
+    "reset": "tsx scripts/reset.ts",
+    "node:stop": "tsx scripts/node-ctl.ts stop",
+    "node:start": "tsx scripts/node-ctl.ts start",
+    "db:stop": "tsx scripts/db-ctl.ts stop",
+    "db:start": "tsx scripts/db-ctl.ts start",
+    "verify:integrity": "tsx scripts/verify-integrity.ts",
+    "failover:load": "tsx scripts/failover-under-load.ts",
+    "grpc:demo": "tsx scripts/grpc-demo.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.19",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.2.3",
+    "prettier": "^3.5.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

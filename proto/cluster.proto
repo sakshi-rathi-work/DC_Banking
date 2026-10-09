@@ -1,0 +1,179 @@
+syntax = "proto3";
+package bank.v1;
+
+// ===== Empty =====
+message Empty {}
+
+// ===== Service =====
+service ClusterService {
+  // Membership
+  rpc Heartbeat(HeartbeatMsg)            returns (HeartbeatAck);
+  rpc Ping(PingRequest)                  returns (PingReply);
+
+  // Bully election
+  rpc Election(ElectionMsg)              returns (ElectionReply);
+  rpc Coordinator(CoordinatorMsg)        returns (Empty);
+
+  // Ring election (handler returns empty ack immediately, forwards asynchronously)
+  rpc RingElection(RingToken)            returns (Empty);
+  rpc RingCoordinator(RingCoordinatorMsg) returns (Empty);
+
+  // Berkeley clock sync
+  rpc GetTime(GetTimeRequest)            returns (GetTimeReply);
+  rpc AdjustClock(AdjustClockRequest)    returns (AdjustClockReply);
+
+  // Replication
+  rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesReply);
+  rpc GetLogEntries(GetLogEntriesRequest) returns (GetLogEntriesReply);
+  rpc GetSnapshot(SnapshotRequest)        returns (stream SnapshotChunk);
+}
+
+// ===== Heartbeat =====
+message HeartbeatMsg {
+  int32      node_id           = 1;
+  string     status            = 2;
+  string     role              = 3;
+  int64      epoch             = 4;
+  int32      leader_id         = 5;
+  int64      last_seq          = 6;
+  int64      last_entry_epoch  = 7;
+  int64      lamport           = 8;
+  NodeConfig config            = 9;
+  int32      active_requests   = 10;
+  double     event_loop_lag_ms = 11;
+  int64      sent_at_ms        = 12;
+}
+
+message HeartbeatAck {
+  int32 node_id = 1;
+  int64 epoch   = 2;
+  int64 lamport = 3;
+}
+
+message NodeConfig {
+  string election_algorithm = 1;
+  string consistency_mode   = 2;
+  int64  version            = 3;
+}
+
+// ===== Ping =====
+message PingRequest {
+  int32  from_node = 1;
+  int64  lamport   = 2;
+  int64  sent_at   = 3;
+}
+
+message PingReply {
+  int32  node_id     = 1;
+  int64  lamport     = 2;
+  string status      = 3;
+  int64  received_at = 4;
+}
+
+// ===== Bully Election =====
+message ElectionMsg {
+  string election_id   = 1;
+  int32  from_node     = 2;
+  int32  from_priority = 3;
+  int64  epoch         = 4;
+}
+
+message ElectionReply {
+  bool  ok      = 1;
+  int32 node_id = 2;
+  int64 epoch   = 3;
+}
+
+message CoordinatorMsg {
+  string election_id = 1;
+  int32  leader_id   = 2;
+  int64  epoch       = 3;
+}
+
+// ===== Ring Election =====
+message RingCandidate {
+  int32 id       = 1;
+  int32 priority = 2;
+}
+
+message RingToken {
+  string              election_id = 1;
+  int32               initiator   = 2;
+  repeated RingCandidate candidates = 3;
+  repeated int32      skipped     = 4;
+}
+
+message RingCoordinatorMsg {
+  string         election_id  = 1;
+  int32          initiator    = 2;
+  int32          winner       = 3;
+  int64          epoch        = 4;
+  repeated int32 participants = 5;
+}
+
+// ===== Berkeley Clock Sync =====
+message GetTimeRequest {
+  string round_id = 1;
+}
+
+message GetTimeReply {
+  int64 synced_time_us = 1;
+}
+
+message AdjustClockRequest {
+  string round_id  = 1;
+  double adjust_ms = 2;
+}
+
+message AdjustClockReply {
+  double adjustment_before_ms = 1;
+  double adjustment_after_ms  = 2;
+}
+
+// ===== Replication =====
+message LogEntry {
+  int64  seq          = 1;
+  int64  epoch        = 2;
+  string op_type      = 3;
+  string payload_json = 4;
+  int64  lamport      = 5;
+  int32  origin_node  = 6;
+  string physical_ts  = 7;
+}
+
+message AppendEntriesRequest {
+  int64              epoch          = 1;
+  int32              leader_id      = 2;
+  int64              prev_seq       = 3;
+  int64              prev_epoch     = 4;
+  repeated LogEntry  entries        = 5;
+  int64              leader_last_seq = 6;
+}
+
+message AppendEntriesReply {
+  bool   ok       = 1;
+  int64  last_seq = 2;
+  int64  epoch    = 3;
+  string reason   = 4;  // STALE_EPOCH | GAP | CONFLICT
+}
+
+message GetLogEntriesRequest {
+  int64 from_seq    = 1;
+  int32 max_entries = 2;
+}
+
+message GetLogEntriesReply {
+  repeated LogEntry entries  = 1;
+  int64             last_seq = 2;
+}
+
+message SnapshotRequest {
+  int64 requester_last_seq = 1;
+}
+
+message SnapshotChunk {
+  string          table        = 1;
+  repeated string rows_json    = 2;
+  bool            last         = 3;
+  int64           snapshot_seq = 4;
+}

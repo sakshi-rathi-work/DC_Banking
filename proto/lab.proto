@@ -1,0 +1,86 @@
+syntax = "proto3";
+package bank.v1;
+
+import "cluster.proto";
+import "observability.proto";
+
+// ===== Service (LAB_MODE only) =====
+service LabService {
+  rpc SetFaultMode(FaultModeRequest)           returns (Empty);
+  rpc SetConfig(LabConfigRequest)              returns (Empty);
+  rpc TriggerElection(TriggerElectionRequest)  returns (TriggerElectionReply);
+  rpc TriggerClockSync(Empty)                  returns (ClockSyncRound);
+  rpc SimulateWork(SimulateWorkRequest)         returns (SimulateWorkReply);
+  rpc CpuTask(CpuTaskRequest)                  returns (CpuTaskReply);
+  rpc PeerPing(PeerPingRequest)                returns (PeerPingReply);
+}
+
+// ===== Fault Mode =====
+message FaultModeRequest {
+  string mode = 1;  // NONE | CRASH | PARTITION
+}
+
+// ===== Lab Config =====
+message LabConfigRequest {
+  string election_algorithm    = 1;
+  string consistency_mode      = 2;
+  int32  replication_delay_ms  = 3;
+  int32  artificial_latency_ms = 4;
+}
+
+// ===== Election Trigger =====
+message TriggerElectionRequest {
+  string algorithm     = 1;  // bully | ring
+  int32  initiator_node_id = 2;
+}
+
+message TriggerElectionReply {
+  string election_id = 1;
+  string algorithm   = 2;
+  bool   accepted    = 3;
+}
+
+// ===== Simulate Work =====
+message SimulateWorkRequest {
+  int32 work_ms = 1;
+}
+
+message SimulateWorkReply {
+  int32  node_id      = 1;
+  int32  work_ms      = 2;
+  double actual_ms    = 3;
+  int64  lamport      = 4;
+}
+
+// ===== CPU Task =====
+message CpuTaskRequest {
+  string mode       = 1;  // MAIN | WORKER
+  int32  iterations = 2;
+  int32  parallel   = 3;
+}
+
+message CpuTaskReply {
+  int32  node_id                = 1;
+  string mode                   = 2;
+  double duration_ms            = 3;
+  double event_loop_lag_p99_ms  = 4;
+  repeated double task_durations_ms = 5;
+}
+
+// ===== Peer Ping =====
+message PeerPingRequest {
+  int32 target_node_id = 1;
+}
+
+message PeerPingHop {
+  int32  from_node     = 1;
+  int32  to_node       = 2;
+  string method        = 3;
+  int64  lamport_send  = 4;
+  int64  lamport_recv  = 5;
+  double latency_ms    = 6;
+}
+
+message PeerPingReply {
+  repeated PeerPingHop hops = 1;
+}

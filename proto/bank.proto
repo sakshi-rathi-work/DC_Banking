@@ -1,0 +1,187 @@
+syntax = "proto3";
+package bank.v1;
+
+// ===== Context =====
+// Present on every BankService request for tracing and auth context.
+message Ctx {
+  string request_id      = 1;
+  string user_id         = 2;  // authenticated by gateway
+  string idempotency_key = 3;
+}
+
+// ===== Service =====
+service BankService {
+  // Auth
+  rpc Register(RegisterRequest)             returns (AuthResponse);
+  rpc Login(LoginRequest)                   returns (AuthResponse);
+  rpc GetMe(GetMeRequest)                   returns (UserInfo);
+
+  // Accounts
+  rpc CreateAccount(CreateAccountRequest)   returns (Account);
+  rpc ListAccounts(ListAccountsRequest)     returns (ListAccountsResponse);
+  rpc GetAccount(GetAccountRequest)         returns (Account);
+  rpc LookupAccount(LookupAccountRequest)   returns (LookupAccountResponse);
+
+  // Transactions
+  rpc Deposit(MoneyRequest)                 returns (TransactionResult);
+  rpc Withdraw(MoneyRequest)                returns (TransactionResult);
+  rpc Transfer(TransferRequest)             returns (TransactionResult);
+  rpc ListTransactions(ListTransactionsRequest) returns (ListTransactionsResponse);
+  rpc GetTransaction(GetTransactionRequest) returns (Transaction);
+
+  // Statement
+  rpc GetStatement(StatementRequest)        returns (StatementResponse);
+}
+
+// ===== Auth messages =====
+message RegisterRequest {
+  string name     = 1;
+  string email    = 2;
+  string password = 3;
+}
+
+message LoginRequest {
+  string email    = 1;
+  string password = 2;
+}
+
+message AuthResponse {
+  UserInfo user  = 1;
+  string   token = 2;
+}
+
+message GetMeRequest {
+  Ctx ctx = 1;
+}
+
+message UserInfo {
+  string id    = 1;
+  string name  = 2;
+  string email = 3;
+}
+
+// ===== Account messages =====
+message CreateAccountRequest {
+  Ctx    ctx      = 1;
+  string nickname = 2;
+}
+
+message ListAccountsRequest {
+  Ctx ctx = 1;
+}
+
+message ListAccountsResponse {
+  repeated Account accounts = 1;
+}
+
+message GetAccountRequest {
+  Ctx    ctx        = 1;
+  string account_id = 2;
+}
+
+message LookupAccountRequest {
+  Ctx    ctx            = 1;
+  string account_number = 2;
+}
+
+message LookupAccountResponse {
+  string account_number = 1;
+  string holder_name    = 2;
+}
+
+message Account {
+  string id             = 1;
+  string account_number = 2;
+  string nickname       = 3;
+  int64  balance_paise  = 4;
+  string currency       = 5;
+  string status         = 6;
+  int64  version        = 7;
+  string created_at     = 8;
+}
+
+// ===== Transaction messages =====
+message MoneyRequest {
+  Ctx    ctx          = 1;
+  string account_id   = 2;
+  int64  amount_paise = 3;
+  string note         = 4;
+}
+
+message TransferRequest {
+  Ctx    ctx               = 1;
+  string from_account_id   = 2;
+  string to_account_number = 3;
+  int64  amount_paise      = 4;
+  string note              = 5;
+}
+
+message Transaction {
+  string id                        = 1;
+  string reference                 = 2;
+  string type                      = 3;
+  string status                    = 4;
+  string reject_reason             = 5;
+  string source_account_id         = 6;
+  string destination_account_id    = 7;
+  int64  amount_paise              = 8;
+  int64  source_balance_after      = 9;
+  int64  destination_balance_after = 10;
+  string note                      = 11;
+  int32  entry_node                = 12;
+  int32  processed_by_node         = 13;
+  int64  epoch                     = 14;
+  int64  log_seq                   = 15;
+  int64  lamport                   = 16;
+  string physical_ts               = 17;
+}
+
+message ReplicationInfo {
+  string         mode          = 1;
+  repeated int32 acked_by      = 2;
+  repeated int32 pending_nodes = 3;
+  int64          duration_ms   = 4;
+}
+
+message ReadMeta {
+  int32 served_by   = 1;
+  int64 applied_seq = 2;
+  int64 leader_seq  = 3;
+  bool  stale       = 4;
+}
+
+message TransactionResult {
+  Transaction     transaction = 1;
+  ReplicationInfo replication = 2;
+}
+
+message ListTransactionsRequest {
+  Ctx    ctx        = 1;
+  string account_id = 2;
+  string type       = 3;
+  string status     = 4;
+  int32  limit      = 5;
+  string cursor     = 6;
+}
+
+message ListTransactionsResponse {
+  repeated Transaction transactions = 1;
+  string               next_cursor  = 2;
+}
+
+message GetTransactionRequest {
+  Ctx    ctx            = 1;
+  string transaction_id = 2;
+}
+
+// ===== Statement =====
+message StatementRequest {
+  Ctx    ctx        = 1;
+  string account_id = 2;
+  string from_date  = 3;  // ISO-8601
+  string to_date    = 4;  // ISO-8601
+}
+
+message StatementResponse {
+  bytes csv_data = 1;
+}

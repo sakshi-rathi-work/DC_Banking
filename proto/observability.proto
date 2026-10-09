@@ -1,0 +1,173 @@
+syntax = "proto3";
+package bank.v1;
+
+import "cluster.proto";
+
+// ===== Service =====
+service ObservabilityService {
+  rpc GetStatus(Empty)                returns (NodeStatus);
+  rpc GetEvents(GetEventsRequest)     returns (GetEventsReply);
+  rpc GetRpcTrace(GetRpcTraceRequest) returns (GetRpcTraceReply);
+  rpc GetElections(GetElectionsRequest) returns (GetElectionsReply);
+  rpc GetClockState(Empty)            returns (ClockState);
+  rpc GetClockHistory(GetHistoryRequest) returns (ClockHistoryReply);
+  rpc GetReplicationState(Empty)      returns (ReplicationState);
+  rpc GetIntegrity(Empty)             returns (Integrity);
+}
+
+// ===== Node Status =====
+message NodeStatus {
+  int32  node_id             = 1;
+  int32  priority            = 2;
+  string status              = 3;
+  string role                = 4;
+  bool   leader_ready        = 5;
+  int64  epoch               = 6;
+  int32  leader_id           = 7;
+  int64  last_seq            = 8;
+  int64  lamport             = 9;
+  int32  active_requests     = 10;
+  double event_loop_lag_ms   = 11;
+  int64  last_heartbeat_age_ms = 12;
+  bool   reachable           = 13;
+  string fault_mode          = 14;
+}
+
+// ===== Events =====
+message EventEntry {
+  int64  lamport        = 1;
+  int32  node_id        = 2;
+  string physical_ts    = 3;
+  string service        = 4;
+  string event_type     = 5;
+  string severity       = 6;
+  string request_id     = 7;
+  string transaction_id = 8;
+  int32  peer_node_id   = 9;
+  string details_json   = 10;
+}
+
+message GetEventsRequest {
+  int64  since     = 1;  // Lamport cursor
+  int32  limit     = 2;
+  string type      = 3;
+  int32  node      = 4;
+  string request_id = 5;
+}
+
+message GetEventsReply {
+  repeated EventEntry events = 1;
+}
+
+// ===== RPC Trace =====
+message RpcTraceEntry {
+  string method        = 1;
+  int32  from_node     = 2;
+  int32  to_node       = 3;
+  int64  lamport_send  = 4;
+  int64  lamport_recv  = 5;
+  double latency_ms    = 6;
+  string request_id    = 7;
+  string physical_ts   = 8;
+}
+
+message GetRpcTraceRequest {
+  int32  limit      = 1;
+  string request_id = 2;
+}
+
+message GetRpcTraceReply {
+  repeated RpcTraceEntry traces = 1;
+}
+
+// ===== Elections =====
+message ElectionEntry {
+  string         election_id  = 1;
+  string         algorithm    = 2;
+  string         trigger      = 3;
+  int32          initiator    = 4;
+  int32          winner       = 5;
+  int64          epoch        = 6;
+  repeated int32 participants = 7;
+  string         messages_json = 8;
+  string         outcome      = 9;
+  string         started_at   = 10;
+  string         finished_at  = 11;
+}
+
+message GetElectionsRequest {
+  int32 limit = 1;
+}
+
+message GetElectionsReply {
+  repeated ElectionEntry elections = 1;
+}
+
+// ===== Clock =====
+message ClockState {
+  int64  synced_time_us        = 1;
+  int64  hardware_time_us      = 2;
+  double adjustment_ms         = 3;
+  double offset_from_master_ms = 4;
+  double ground_truth_error_ms = 5;
+  int64  lamport               = 6;
+  string last_sync_at          = 7;
+}
+
+message ClockSyncNodeResult {
+  int32  node_id          = 1;
+  double rtt_ms           = 2;
+  double offset_before_ms = 3;
+  bool   included         = 4;
+  double adjust_ms        = 5;
+  double residual_after_ms = 6;
+}
+
+message ClockSyncRound {
+  string                        round_id   = 1;
+  int32                         master     = 2;
+  double                        average_ms = 3;
+  repeated ClockSyncNodeResult  nodes      = 4;
+}
+
+message GetHistoryRequest {
+  int32 limit = 1;
+}
+
+message ClockHistoryReply {
+  repeated ClockSyncRound rounds = 1;
+}
+
+// ===== Replication =====
+message ReplicationNodeState {
+  int32  node_id     = 1;
+  string role        = 2;
+  int64  last_seq    = 3;
+  int64  match_seq   = 4;
+  int64  lag_entries = 5;
+  int64  lag_ms      = 6;
+  string state       = 7;  // IN_SYNC | LAGGING | RECOVERING
+  string checksum    = 8;
+}
+
+message ReplicationState {
+  string                        mode          = 1;
+  int32                         leader_id     = 2;
+  int64                         leader_seq    = 3;
+  repeated ReplicationNodeState nodes         = 4;
+}
+
+// ===== Integrity =====
+message NodeIntegrity {
+  int32  node_id              = 1;
+  int64  last_seq             = 2;
+  int64  account_count        = 3;
+  int64  txn_count            = 4;
+  int64  total_balance_paise  = 5;
+  string accounts_checksum    = 6;
+}
+
+message Integrity {
+  repeated NodeIntegrity nodes   = 1;
+  bool                   in_sync = 2;
+}
