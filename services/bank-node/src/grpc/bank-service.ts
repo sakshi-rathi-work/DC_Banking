@@ -20,6 +20,8 @@ import type { PeerManager } from '../cluster/peer-manager.js';
 
 const logger = createLogger({ service: 'grpc-bank' });
 
+import type { FaultManager } from '../cluster/fault-manager.js';
+
 interface ServiceDeps {
   pool: pg.Pool;
   jwtSecret: string;
@@ -29,8 +31,8 @@ interface ServiceDeps {
   isLeader?: () => boolean;
   getLeaderId?: () => number;
   peerManager?: PeerManager;
+  faultManager?: FaultManager;
 }
-
 
 /**
  * Handle errors by mapping AppError to gRPC status + trailers.
@@ -57,11 +59,18 @@ export function createBankServiceHandlers(deps: ServiceDeps) {
     return { nodeId, epoch: deps.getEpoch(), lamport: deps.getLamport() };
   }
 
+  function checkCrashed() {
+    if (deps.faultManager?.isCrashed()) {
+      throw new AppError('NODE_UNAVAILABLE', 'Node is currently simulated offline / crashed.');
+    }
+  }
+
   async function tryForwardWrite<TRes>(
     methodName: string,
     call: grpc.ServerUnaryCall<unknown, unknown>,
     callback: grpc.sendUnaryData<unknown>,
   ): Promise<boolean> {
+    checkCrashed();
     if (deps.isLeader && !deps.isLeader() && deps.getLeaderId && deps.peerManager) {
       const leaderId = deps.getLeaderId();
       if (leaderId !== nodeId) {
@@ -88,6 +97,8 @@ export function createBankServiceHandlers(deps: ServiceDeps) {
       callback: grpc.sendUnaryData<unknown>,
     ) {
       try {
+        checkCrashed();
+        if (await tryForwardWrite('Register', call, callback)) return;
         const req = call.request;
         if (!req.name || !req.email || !req.password) {
           throw new AppError('VALIDATION_ERROR', 'Name, email, and password are required.');

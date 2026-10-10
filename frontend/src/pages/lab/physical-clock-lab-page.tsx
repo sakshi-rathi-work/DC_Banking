@@ -2,10 +2,20 @@ import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { NodeBadge } from '../../components/common/node-badge';
-import { Clock, RefreshCw } from 'lucide-react';
+import { Clock, RefreshCw, Info } from 'lucide-react';
 
 export const PhysicalClockLabPage: React.FC = () => {
   const queryClient = useQueryClient();
+
+  // Fetch leader to target sync at the correct node
+  const { data: leaderData } = useQuery({
+    queryKey: ['system-leader'],
+    queryFn: async () => {
+      const res = await api.getLeader();
+      return res.data;
+    },
+    refetchInterval: 3000,
+  });
 
   // Polling live clock states across all 3 nodes
   const { data: clocks = [] } = useQuery({
@@ -27,9 +37,12 @@ export const PhysicalClockLabPage: React.FC = () => {
     refetchInterval: 2500,
   });
 
+  const activeMasterId = leaderData?.leaderId ?? 1;
+
   const syncMutation = useMutation({
     mutationFn: async () => {
-      return api.triggerClockSync(1);
+      // Always trigger on the active leader (Berkeley master)
+      return api.triggerClockSync(activeMasterId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['system-clocks'] });
@@ -53,12 +66,22 @@ export const PhysicalClockLabPage: React.FC = () => {
         </p>
       </div>
 
+      {/* Algorithm Info Banner */}
+      <div className="flex items-start gap-3 p-4 rounded-xl bg-indigo-950/40 border border-indigo-800/60">
+        <Info className="w-4 h-4 text-indigo-400 mt-0.5 shrink-0" />
+        <div className="text-xs text-slate-300 space-y-1">
+          <p><strong className="text-indigo-300">Berkeley Algorithm:</strong> The master node (current cluster leader) polls all follower clocks, computes a fault-tolerant average offset (discarding outliers), then sends each node a relative ±ms adjustment — no absolute time source needed.</p>
+          <p className="text-slate-400">Periodic auto-sync runs every <code className="text-amber-300">10 seconds</code> on the leader. Click <em>Synchronize Now</em> for an immediate on-demand round.</p>
+          <p className="text-slate-400">Active Berkeley Master: <span className="text-indigo-300 font-bold">Node {activeMasterId}</span> {leaderData?.leaderId ? '(Leader)' : '(Default)'}</p>
+        </div>
+      </div>
+
       {/* 2. Action Panel */}
       <div className="glass-panel p-6 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h3 className="font-bold text-white text-base">Berkeley Master Trigger</h3>
           <p className="text-xs text-slate-400 mt-0.5">
-            Leader queries peer physical times, calculates fault-tolerant average, and dispatches relative adjustments.
+            Leader (Node {activeMasterId}) queries peer physical times, calculates fault-tolerant average, and dispatches relative adjustments.
           </p>
         </div>
         <button
@@ -77,6 +100,12 @@ export const PhysicalClockLabPage: React.FC = () => {
         </div>
       )}
 
+      {syncMutation.isSuccess && (
+        <div className="px-4 py-2 rounded-lg bg-emerald-950/60 border border-emerald-800 text-emerald-300 text-xs">
+          ✓ Berkeley synchronization round completed. Clock adjustments dispatched to all follower nodes.
+        </div>
+      )}
+
       {/* 3. Live State: Current Node Clock Offsets */}
       <div className="glass-panel p-6 rounded-2xl space-y-4">
         <h3 className="font-bold text-white text-base">Current Node Physical Clocks</h3>
@@ -84,12 +113,18 @@ export const PhysicalClockLabPage: React.FC = () => {
           {clocks.map((c: any, idx: number) => {
             const nodeId = c.nodeId || idx + 1;
             const syncedDate = new Date(c.syncedTimeUs ? c.syncedTimeUs / 1000 : Date.now());
+            const isMaster = nodeId === activeMasterId;
 
             return (
-              <div key={nodeId} className="p-4 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-3">
+              <div key={nodeId} className={`p-4 rounded-xl border space-y-3 ${isMaster ? 'bg-indigo-950/30 border-indigo-600/50' : 'bg-slate-800/60 border-slate-700/60'}`}>
                 <div className="flex justify-between items-center">
                   <NodeBadge nodeId={nodeId} />
-                  <span className="text-xs font-mono text-slate-400">L={c.lamport ?? 0}</span>
+                  <div className="flex items-center gap-1.5">
+                    {isMaster && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-900 text-indigo-300 font-bold border border-indigo-700">MASTER</span>
+                    )}
+                    <span className="text-xs font-mono text-slate-400">L={c.lamport ?? 0}</span>
+                  </div>
                 </div>
 
                 <div>
@@ -102,7 +137,9 @@ export const PhysicalClockLabPage: React.FC = () => {
                 <div className="space-y-1 pt-1 text-xs font-mono">
                   <div className="flex justify-between">
                     <span className="text-slate-400">Cumulative Adjustment:</span>
-                    <span className="text-amber-400">{c.adjustmentMs ? `${c.adjustmentMs.toFixed(2)} ms` : '0.00 ms'}</span>
+                    <span className={`font-bold ${Math.abs(c.adjustmentMs ?? 0) > 100 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                      {c.adjustmentMs ? `${c.adjustmentMs >= 0 ? '+' : ''}${c.adjustmentMs.toFixed(2)} ms` : '±0.00 ms'}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400">Offset from Master:</span>
@@ -113,6 +150,9 @@ export const PhysicalClockLabPage: React.FC = () => {
             );
           })}
         </div>
+        {clocks.length === 0 && (
+          <div className="py-6 text-center text-slate-500 text-xs">Waiting for clock data from nodes...</div>
+        )}
       </div>
 
       {/* 4. Round History Table */}
@@ -121,7 +161,7 @@ export const PhysicalClockLabPage: React.FC = () => {
 
         {rounds.length === 0 ? (
           <div className="py-8 text-center text-slate-500 text-xs">
-            No synchronization rounds recorded yet. Click "Synchronize Now" to trigger a round.
+            No synchronization rounds recorded yet. Click "Synchronize Now" to trigger a round, or wait for the automatic 10-second periodic sync.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -175,7 +215,7 @@ export const PhysicalClockLabPage: React.FC = () => {
       {/* 5. Expected Result Note */}
       <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-400">
         <strong className="text-slate-300">Expected Result: </strong>
-        Before synchronization, simulated hardware clocks may skew by seconds. After a Berkeley round, the coordinator measures pairwise verification residuals (<code className="text-emerald-400">residualAfterMs &lt; 50ms</code>), proving tight clock synchronization across distributed nodes.
+        Before synchronization, simulated hardware clocks may skew by seconds. After a Berkeley round, the coordinator measures pairwise verification residuals (<code className="text-emerald-400">residualAfterMs &lt; 50ms</code>), proving tight clock synchronization across distributed nodes. The leader automatically runs sync every 10 seconds — only one master runs at a time to avoid conflicting adjustments.
       </div>
     </div>
   );

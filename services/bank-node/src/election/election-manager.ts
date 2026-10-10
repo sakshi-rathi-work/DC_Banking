@@ -22,6 +22,7 @@ export interface ElectionManagerOptions {
   eventSink?: EventSink;
   leaderPrep?: LeaderPrep;
   preemptOnRecovery?: boolean;
+  onLeaderChange?: (leaderId: number, isSelf: boolean) => void;
 }
 
 export class ElectionManager {
@@ -35,6 +36,7 @@ export class ElectionManager {
   private eventSink?: EventSink;
   private leaderPrep?: LeaderPrep;
   private preemptOnRecovery: boolean;
+  private onLeaderChange?: (leaderId: number, isSelf: boolean) => void;
 
   private bullyCore: BullyElectionCore;
   private ringCore: RingElectionCore;
@@ -54,6 +56,7 @@ export class ElectionManager {
     this.eventSink = opts.eventSink;
     this.leaderPrep = opts.leaderPrep;
     this.preemptOnRecovery = opts.preemptOnRecovery ?? true;
+    this.onLeaderChange = opts.onLeaderChange;
 
     const clusterNodes = this.getClusterNodeInfos();
     this.bullyCore = new BullyElectionCore({ selfNodeId: opts.selfNodeId, selfPriority: opts.selfPriority, clusterNodes });
@@ -108,9 +111,18 @@ export class ElectionManager {
    * Persist epoch and leader state to database & log history.
    */
   public async persistState(leaderId: number, epoch: number, electionId?: string, trigger = 'HEARTBEAT_TIMEOUT', participants: number[] = [], outcome = 'ELECTED'): Promise<void> {
+    const prevLeaderId = this.currentLeaderId;
     this.currentEpoch = epoch;
     this.currentLeaderId = leaderId;
     this.setEpoch(epoch);
+
+    if (prevLeaderId !== leaderId && this.onLeaderChange) {
+      try {
+        this.onLeaderChange(leaderId, leaderId === this.selfNodeId);
+      } catch (err) {
+        logger.error('Error in onLeaderChange handler', { err });
+      }
+    }
 
     if (this.pool) {
       try {

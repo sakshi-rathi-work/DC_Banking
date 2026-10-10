@@ -90,10 +90,12 @@ systemRouter.get('/nodes', async (req: Request, res: Response, next: NextFunctio
 systemRouter.get('/leader', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const nodeAddresses = getNodeAddresses();
+    let fallbackLeader: any = null;
+
     for (const [id, addr] of Object.entries(nodeAddresses)) {
       try {
         const status = (await ObservabilityGrpcClient.getStatus(addr)) as any;
-        if (status?.role === 'LEADER') {
+        if (status?.role === 'LEADER' && status.reachable) {
           return res.json({
             success: true,
             data: {
@@ -104,9 +106,20 @@ systemRouter.get('/leader', async (_req: Request, res: Response, next: NextFunct
             },
           });
         }
+        if (status?.leaderId && status.leaderId > 0 && !fallbackLeader) {
+          fallbackLeader = {
+            nodeId: status.leaderId,
+            leaderId: status.leaderId,
+            epoch: status.epoch || 0,
+            ready: true,
+          };
+        }
       } catch {
         // try next node
       }
+    }
+    if (fallbackLeader) {
+      return res.json({ success: true, data: fallbackLeader });
     }
     res.json({ success: true, data: { leaderId: 0, epoch: 0, ready: false } });
   } catch (err) {
@@ -257,8 +270,21 @@ systemRouter.get('/clocks', async (req: Request, res: Response, next: NextFuncti
 systemRouter.get('/clocks/history', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
-    const history = await ObservabilityGrpcClient.getClockHistory(limit);
-    res.json({ success: true, data: history });
+    const nodeAddresses = getNodeAddresses();
+    let bestHistory: any = { rounds: [] };
+
+    for (const addr of Object.values(nodeAddresses)) {
+      try {
+        const history = (await ObservabilityGrpcClient.getClockHistory(limit, addr)) as any;
+        if (history?.rounds && history.rounds.length > (bestHistory.rounds?.length ?? 0)) {
+          bestHistory = history;
+        }
+      } catch {
+        // try next node
+      }
+    }
+
+    res.json({ success: true, data: bestHistory });
   } catch (err) {
     next(err);
   }

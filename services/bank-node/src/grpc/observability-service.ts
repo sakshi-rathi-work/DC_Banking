@@ -24,6 +24,9 @@ export interface ObservabilityServiceOptions {
   integrityChecker?: IntegrityChecker;
   berkeleySync?: BerkeleyClockSync;
   pool?: pg.Pool;
+  faultManager?: import('../cluster/fault-manager.js').FaultManager;
+  getRole?: () => string;
+  getStatus?: () => string;
 }
 
 export function createObservabilityServiceHandlers(opts: ObservabilityServiceOptions) {
@@ -42,6 +45,9 @@ export function createObservabilityServiceHandlers(opts: ObservabilityServiceOpt
     integrityChecker,
     berkeleySync,
     pool,
+    faultManager,
+    getRole,
+    getStatus,
   } = opts;
 
   return {
@@ -53,11 +59,16 @@ export function createObservabilityServiceHandlers(opts: ObservabilityServiceOpt
         lastHeartbeatAge = Date.now() - latest;
       }
 
+      const isCrashed = faultManager?.isCrashed() ?? false;
+      const currentRole = getRole ? getRole() : (getLeaderId() === nodeId ? 'LEADER' : 'FOLLOWER');
+      const nodeStatus = isCrashed ? 'DOWN' : (getStatus ? getStatus() : 'HEALTHY');
+      const currentFaultMode = faultManager ? faultManager.getMode() : 'NONE';
+
       const status = {
         nodeId,
         priority,
-        status: 'HEALTHY',
-        role,
+        status: nodeStatus,
+        role: currentRole,
         leaderReady: true,
         epoch: getEpoch(),
         leaderId: getLeaderId(),
@@ -66,8 +77,8 @@ export function createObservabilityServiceHandlers(opts: ObservabilityServiceOpt
         activeRequests: 0,
         eventLoopLagMs: Math.round(lagMonitor.getP99Ms() * 100) / 100,
         lastHeartbeatAgeMs: lastHeartbeatAge,
-        reachable: true,
-        faultMode: 'NONE',
+        reachable: !isCrashed,
+        faultMode: currentFaultMode,
       };
 
       callback(null, status);

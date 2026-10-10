@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { NodeBadge } from '../../components/common/node-badge';
-import { Sliders, Play, Zap, Activity, Loader2 } from 'lucide-react';
+import { Sliders, Play, Zap, Activity, Loader2, Info, Scale } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 
 export const LoadBalancingLabPage: React.FC = () => {
@@ -43,8 +43,31 @@ export const LoadBalancingLabPage: React.FC = () => {
         <div className="flex items-center gap-2 text-indigo-400 font-bold text-xs uppercase tracking-wider mb-1">
           <Sliders className="w-4 h-4" /><span>Lab Module 8</span>
         </div>
-        <h2 className="text-2xl font-bold text-white tracking-tight">Least Connections Load Balancer Lab</h2>
+        <h2 className="text-2xl font-bold text-white tracking-tight">Load Balancer Lab</h2>
         <p className="text-sm text-slate-400 mt-1">Demonstrates dynamic traffic routing favoring nodes with fewest active in-flight requests and lowest EWMA latency.</p>
+      </div>
+
+      {/* Algorithm Info Card */}
+      <div className="glass-panel p-5 rounded-2xl border border-indigo-800/50 bg-indigo-950/20 space-y-3">
+        <div className="flex items-center gap-2 text-indigo-300 font-bold text-sm">
+          <Scale className="w-5 h-5" />
+          <span>Active Load Balancing Algorithm</span>
+          <span className="ml-auto text-xs px-2 py-0.5 rounded bg-indigo-900 border border-indigo-700 text-indigo-200 font-mono">ACTIVE</span>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="flex-1 p-3 rounded-lg bg-slate-900/80 border border-slate-700/60 space-y-1">
+            <p className="text-sm font-bold text-white">Weighted Least-Connections with EWMA Latency Bias</p>
+            <p className="text-xs text-slate-400">Each request is routed to the backend with the lowest <em>score</em>:</p>
+            <code className="block text-xs text-amber-300 bg-slate-800 rounded px-2 py-1 mt-1">
+              score = activeConnections + (ewmaLatencyMs × λ)
+            </code>
+          </div>
+          <div className="flex-1 p-3 rounded-lg bg-slate-900/80 border border-slate-700/60 space-y-1 text-xs text-slate-400">
+            <div className="flex items-start gap-1.5"><Info className="w-3.5 h-3.5 text-indigo-400 mt-0.5 shrink-0" /><p><strong className="text-slate-300">Least Connections:</strong> Routes to the node with fewest in-flight requests, preventing hot-spots during burst traffic.</p></div>
+            <div className="flex items-start gap-1.5"><Info className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" /><p><strong className="text-slate-300">EWMA Latency:</strong> Exponentially-weighted moving average of recent response times — slow nodes get penalized even if their connection count is low.</p></div>
+            <div className="flex items-start gap-1.5"><Info className="w-3.5 h-3.5 text-emerald-400 mt-0.5 shrink-0" /><p><strong className="text-slate-300">Health-aware:</strong> Unhealthy or crashed nodes are excluded from routing until their health check recovers.</p></div>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -71,13 +94,20 @@ export const LoadBalancingLabPage: React.FC = () => {
               <div className="flex justify-between"><span className="text-slate-400">Sent:</span><span className="text-white">{loadResult.totalSent}</span></div>
               <div className="flex justify-between"><span className="text-slate-400">Success / Failed:</span><span><span className="text-emerald-400">{loadResult.successful}</span> / <span className="text-rose-400">{loadResult.failed}</span></span></div>
               <div className="flex justify-between"><span className="text-slate-400">p50 / p90 / p99:</span><span className="text-sky-400">{loadResult.latencyPercentiles?.p50?.toFixed(1)} / {loadResult.latencyPercentiles?.p90?.toFixed(1)} / {loadResult.latencyPercentiles?.p99?.toFixed(1)} ms</span></div>
+              {loadResult.perNodeCounts && (
+                <div className="pt-1 border-t border-slate-700 text-slate-400">
+                  Distribution: {Object.entries(loadResult.perNodeCounts).map(([nid, cnt]: [string, any]) => (
+                    <span key={nid} className="mr-2">Node {nid}: <span className="text-white">{cnt}</span></span>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
 
         <div className="glass-panel p-6 rounded-2xl space-y-4">
           <div className="flex items-center gap-2 text-amber-400 font-bold text-base"><Activity className="w-5 h-5" /><h3>Inject Artificial Node Latency</h3></div>
-          <p className="text-xs text-slate-400">Slow down a specific node. Observe the load balancer shifting traffic to faster peers.</p>
+          <p className="text-xs text-slate-400">Slow down a specific node. Observe the load balancer shifting traffic to faster peers due to EWMA latency bias.</p>
           <div className="space-y-3 pt-1">
             <div className="flex justify-between text-xs">
               <span className="text-slate-400">Target Node:</span>
@@ -95,7 +125,7 @@ export const LoadBalancingLabPage: React.FC = () => {
               {latencyMutation.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
               {latencyMutation.isPending ? 'Injecting...' : `Set Node ${selectedNodeId} Latency`}
             </button>
-            {latencyMutation.isSuccess && <p className="text-xs text-emerald-400 text-center">✓ Latency applied to Node {selectedNodeId}</p>}
+            {latencyMutation.isSuccess && <p className="text-xs text-emerald-400 text-center">✓ Latency of {latencyMs}ms applied to Node {selectedNodeId}</p>}
             {latencyMutation.isError && <p className="text-xs text-rose-400 text-center">{String((latencyMutation.error as any)?.message || 'Failed')}</p>}
           </div>
         </div>
@@ -138,7 +168,7 @@ export const LoadBalancingLabPage: React.FC = () => {
 
       <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-400">
         <strong className="text-slate-300">Expected Result: </strong>
-        When all nodes have equal latency, traffic distributes uniformly (~33% each). Injecting 500ms on Node 2 stretches its active connections, prompting the Least Connections algorithm to divert traffic to faster peers.
+        When all nodes have equal latency, traffic distributes uniformly (~33% each). Injecting 500ms on Node 2 raises its EWMA score, prompting the <strong className="text-white">Weighted Least-Connections with EWMA Latency Bias</strong> algorithm to divert traffic to Node 1 and 3 proportionally.
       </div>
     </div>
   );

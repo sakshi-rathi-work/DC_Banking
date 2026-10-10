@@ -76,6 +76,7 @@ export function createGrpcServer(opts: CreateGrpcServerOptions): Server {
       catchupService: opts.catchupService,
       snapshotService: opts.snapshotService,
       berkeleySync: opts.berkeleySync,
+      faultManager: opts.faultManager,
     });
     server.addService(clusterServiceDef, clusterHandlers);
 
@@ -98,6 +99,8 @@ export function createGrpcServer(opts: CreateGrpcServerOptions): Server {
       integrityChecker: opts.integrityChecker,
       berkeleySync: opts.berkeleySync,
       pool: opts.pool,
+      faultManager: opts.faultManager,
+      getRole: opts.isLeader ? (() => (opts.isLeader!() ? 'LEADER' : 'FOLLOWER')) : undefined,
     });
     server.addService(observabilityServiceDef, observabilityHandlers);
 

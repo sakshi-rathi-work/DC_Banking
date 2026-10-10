@@ -19,14 +19,28 @@ export interface ClusterServiceOptions {
   catchupService?: CatchupService;
   snapshotService?: SnapshotService;
   berkeleySync?: BerkeleyClockSync;
+  faultManager?: import('../cluster/fault-manager.js').FaultManager;
 }
 
 export function createClusterServiceHandlers(opts: ClusterServiceOptions) {
-  const { nodeId, getEpoch, clock, failureDetector, electionManager, applier, catchupService, snapshotService, berkeleySync } = opts;
+  const { nodeId, getEpoch, clock, failureDetector, electionManager, applier, catchupService, snapshotService, berkeleySync, faultManager } = opts;
+
+  function checkClusterFault(callback: grpc.sendUnaryData<any>): boolean {
+    if (faultManager?.isCrashed()) {
+      callback({ code: grpc.status.UNAVAILABLE, details: 'Node is simulated crashed' }, null);
+      return true;
+    }
+    if (faultManager?.isPartitioned()) {
+      callback({ code: grpc.status.UNAVAILABLE, details: 'Node is network partitioned' }, null);
+      return true;
+    }
+    return false;
+  }
 
   return {
     Heartbeat: withGrpcInterceptors(
       (call: grpc.ServerUnaryCall<IncomingHeartbeat, unknown>, callback: grpc.sendUnaryData<unknown>) => {
+        if (checkClusterFault(callback)) return;
         const req = call.request;
 
         if (req && req.nodeId) {
@@ -52,6 +66,7 @@ export function createClusterServiceHandlers(opts: ClusterServiceOptions) {
         call: grpc.ServerUnaryCall<{ fromNode: number; lamport: number }, unknown>,
         callback: grpc.sendUnaryData<unknown>,
       ) => {
+        if (checkClusterFault(callback)) return;
         if (call.request?.lamport) {
           clock.receive(call.request.lamport);
         }
@@ -70,6 +85,7 @@ export function createClusterServiceHandlers(opts: ClusterServiceOptions) {
 
     // Bully election handlers
     Election: withGrpcInterceptors(async (call: grpc.ServerUnaryCall<ElectionMsgPayload, unknown>, callback: grpc.sendUnaryData<unknown>) => {
+      if (checkClusterFault(callback)) return;
       if (!electionManager) {
         return callback({ code: grpc.status.UNIMPLEMENTED, details: 'ElectionManager not configured' }, null);
       }
@@ -82,6 +98,7 @@ export function createClusterServiceHandlers(opts: ClusterServiceOptions) {
     }, clock),
 
     Coordinator: withGrpcInterceptors(async (call: grpc.ServerUnaryCall<CoordinatorMsgPayload, unknown>, callback: grpc.sendUnaryData<unknown>) => {
+      if (checkClusterFault(callback)) return;
       if (!electionManager) {
         return callback({ code: grpc.status.UNIMPLEMENTED, details: 'ElectionManager not configured' }, null);
       }
@@ -95,6 +112,7 @@ export function createClusterServiceHandlers(opts: ClusterServiceOptions) {
 
     // Ring election handlers
     RingElection: withGrpcInterceptors((call: grpc.ServerUnaryCall<RingTokenPayload, unknown>, callback: grpc.sendUnaryData<unknown>) => {
+      if (checkClusterFault(callback)) return;
       if (!electionManager) {
         return callback({ code: grpc.status.UNIMPLEMENTED, details: 'ElectionManager not configured' }, null);
       }
@@ -105,6 +123,7 @@ export function createClusterServiceHandlers(opts: ClusterServiceOptions) {
     }, clock),
 
     RingCoordinator: withGrpcInterceptors((call: grpc.ServerUnaryCall<RingCoordinatorPayload, unknown>, callback: grpc.sendUnaryData<unknown>) => {
+      if (checkClusterFault(callback)) return;
       if (!electionManager) {
         return callback({ code: grpc.status.UNIMPLEMENTED, details: 'ElectionManager not configured' }, null);
       }
@@ -116,6 +135,7 @@ export function createClusterServiceHandlers(opts: ClusterServiceOptions) {
 
     // Replication handlers
     AppendEntries: withGrpcInterceptors(async (call: grpc.ServerUnaryCall<AppendEntriesReq, unknown>, callback: grpc.sendUnaryData<unknown>) => {
+      if (checkClusterFault(callback)) return;
       if (!applier) {
         return callback({ code: grpc.status.UNIMPLEMENTED, details: 'LogApplier not configured' }, null);
       }

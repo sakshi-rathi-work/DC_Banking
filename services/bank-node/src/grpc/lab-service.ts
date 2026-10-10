@@ -192,35 +192,54 @@ export function createLabServiceHandlers(opts: LabServiceOptions) {
             latencyMs: number;
           }> = [];
 
-          if (targetNodeId !== nodeId && peerManager) {
+          if (targetNodeId === nodeId) {
+            const lamportSend = clock.tick();
+            const lamportRecv = clock.tick();
+            hops.push({
+              fromNode: nodeId,
+              toNode: nodeId,
+              method: 'Ping (Local Loopback)',
+              lamportSend,
+              lamportRecv,
+              latencyMs: 0.1,
+            });
+          } else if (peerManager) {
             const client = peerManager.getPeerClient(targetNodeId);
-            if (client) {
-              const t0 = performance.now();
-              const lamportSend = clock.tick();
-              await new Promise<void>((resolve, reject) => {
-                const meta = new grpc.Metadata();
-                meta.set('x-lamport-clock', String(lamportSend));
-                client.ping(
-                  { senderNodeId: nodeId, timestamp: Date.now() },
-                  meta,
-                  undefined,
-                  (err) => {
-                    if (err) return reject(err);
-                    const t1 = performance.now();
-                    const lamportRecv = clock.tick();
-                    hops.push({
-                      fromNode: nodeId,
-                      toNode: targetNodeId,
-                      method: 'Ping',
-                      lamportSend,
-                      lamportRecv,
-                      latencyMs: Number((t1 - t0).toFixed(2)),
-                    });
-                    resolve();
-                  },
-                );
-              });
+            if (!client) {
+              return callback({
+                code: grpc.status.UNAVAILABLE,
+                details: `Peer Node ${targetNodeId} not found in peer directory`,
+              }, null);
             }
+
+            const t0 = performance.now();
+            const lamportSend = clock.tick();
+            await new Promise<void>((resolve, reject) => {
+              const meta = new grpc.Metadata();
+              meta.set('x-lamport-clock', String(lamportSend));
+              meta.set('x-sender-node', String(nodeId));
+              client.ping(
+                { fromNode: nodeId, lamport: lamportSend, sentAt: Date.now() },
+                meta,
+                (err: any, res: any) => {
+                  if (err) return reject(err);
+                  const t1 = performance.now();
+                  if (res?.lamport) {
+                    clock.receive(Number(res.lamport));
+                  }
+                  const lamportRecv = clock.tick();
+                  hops.push({
+                    fromNode: nodeId,
+                    toNode: targetNodeId,
+                    method: 'Ping',
+                    lamportSend,
+                    lamportRecv,
+                    latencyMs: Math.max(0.1, Number((t1 - t0).toFixed(2))),
+                  });
+                  resolve();
+                },
+              );
+            });
           }
 
           callback(null, { hops });

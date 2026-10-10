@@ -6,6 +6,7 @@ export const authRateLimiter = rateLimit({
   max: 10, // 10 requests per minute
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   handler: (req, _res, next) => {
     next(new AppError('RATE_LIMITED', 'Too many auth requests. Please try again later.'));
   },
@@ -16,6 +17,7 @@ export const generalRateLimiter = rateLimit({
   max: 300, // 300 requests per minute
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   handler: (req, _res, next) => {
     next(new AppError('RATE_LIMITED', 'Too many requests. Please try again later.'));
   },

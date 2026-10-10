@@ -17,6 +17,8 @@ export interface NodeStateProvider {
   getEventLoopLagMs: () => number;
 }
 
+import type { FaultManager } from './fault-manager.js';
+
 export class HeartbeatLoop {
   private peerManager: PeerManager;
   private failureDetector: FailureDetector;
@@ -24,6 +26,7 @@ export class HeartbeatLoop {
   private stateProvider: NodeStateProvider;
   private intervalMs: number;
   private timer: NodeJS.Timeout | null = null;
+  private faultManager?: FaultManager;
 
   constructor(
     peerManager: PeerManager,
@@ -31,12 +34,14 @@ export class HeartbeatLoop {
     clock: LamportClock,
     stateProvider: NodeStateProvider,
     intervalMs = 1000,
+    faultManager?: FaultManager,
   ) {
     this.peerManager = peerManager;
     this.failureDetector = failureDetector;
     this.clock = clock;
     this.stateProvider = stateProvider;
     this.intervalMs = intervalMs;
+    this.faultManager = faultManager;
   }
 
   public start(): void {
@@ -56,8 +61,18 @@ export class HeartbeatLoop {
   }
 
   public tick(): void {
+    // If crashed, the node is completely dead — do not run failure detector or send heartbeats
+    if (this.faultManager?.isCrashed()) {
+      return;
+    }
+
     // First, run failure detector check
     this.failureDetector.checkFailures();
+
+    // If partitioned, suppress sending outgoing peer heartbeats
+    if (this.faultManager?.isPartitioned()) {
+      return;
+    }
 
     // Send heartbeats to all peer clients
     const peerNodeIds = this.peerManager.getAllPeerNodeIds();

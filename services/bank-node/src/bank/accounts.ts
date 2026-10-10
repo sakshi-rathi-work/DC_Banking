@@ -70,10 +70,20 @@ export async function createAccount(
   const accountId = randomUUID();
 
   // Generate unique 12-digit account number with collision retry
-  let accountNumber: string;
-  let attempts = 0;
-  const MAX_ATTEMPTS = 5;
+  let accountNumber = '';
+  // Ensure user exists locally (in case replication is delayed or from another node)
+  const userCheck = await client.query('SELECT id FROM users WHERE id = $1', [userId]);
+  if (userCheck.rows.length === 0) {
+    await client.query(
+      `INSERT INTO users (id, name, email, password_hash)
+       VALUES ($1, 'Customer', $2, 'placeholder')
+       ON CONFLICT (id) DO NOTHING`,
+      [userId, `${userId}@bank.local`],
+    );
+  }
 
+  const MAX_ATTEMPTS = 10;
+  let attempts = 0;
   while (attempts < MAX_ATTEMPTS) {
     accountNumber = generateAccountNumber();
     try {

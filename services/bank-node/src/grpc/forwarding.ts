@@ -23,22 +23,14 @@ type BankServiceClientInstance = {
 const clientCache = new Map<string, BankServiceClientInstance>();
 
 
+import { loadBankProto } from './proto-loader.js';
+
 export function getForwardClient(address: string): BankServiceClientInstance {
   let client = clientCache.get(address);
   if (!client) {
-    const packageDef = protoLoader.loadSync(path.join(PROTO_DIR, 'bank.proto'), {
-      keepCase: false,
-      longs: Number,
-      enums: String,
-      defaults: true,
-      oneofs: true,
-      includeDirs: [PROTO_DIR],
-    });
-
-    const proto = grpc.loadPackageDefinition(packageDef) as unknown as {
+    const proto = loadBankProto() as unknown as {
       bank: { v1: { BankService: new (target: string, creds: grpc.ChannelCredentials) => BankServiceClientInstance } };
     };
-
     client = new proto.bank.v1.BankService(address, grpc.credentials.createInsecure());
     clientCache.set(address, client);
   }
@@ -72,7 +64,7 @@ export async function forwardWriteToLeader<TRes>(
   metadata.set('x-forwarded-by', selfNodeId.toString());
 
   return new Promise<TRes>((resolve, reject) => {
-    const fn = client[methodName];
+    const fn = (client as any)[methodName] || (client as any)[methodName.charAt(0).toLowerCase() + methodName.slice(1)];
     if (!fn) {
       return reject(new AppError('INTERNAL', `Method ${methodName} not found on gRPC BankService client`));
     }

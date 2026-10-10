@@ -21,6 +21,7 @@ import { IntegrityChecker } from './replication/integrity.js';
 import { SimulatedHwClock } from './clock/simulated-hw-clock.js';
 import { BerkeleyClockSync } from './clock/berkeley-sync.js';
 import { lagMonitor } from './concurrency/lag-monitor.js';
+import { FaultManager } from './cluster/fault-manager.js';
 
 const NodeConfigSchema = z.object({
   NODE_ID: z.coerce.number().default(1),
@@ -42,6 +43,7 @@ const logger = createLogger({ service: 'bank-node', node: config.NODE_ID });
 
 let isHealthy = false;
 let grpcServer: Server | null = null;
+const faultManager = new FaultManager();
 
 const clock = new LamportClock();
 let peerManager: PeerManager | null = null;
@@ -83,6 +85,12 @@ function getLastSeq(): number {
 // Health HTTP server on :9000/healthz
 const healthServer = http.createServer(async (req, res) => {
   if (req.url === '/healthz' || req.url === '/health') {
+    if (faultManager.isCrashed()) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'DOWN', node: config.NODE_ID, fault: 'CRASH' }));
+      return;
+    }
+
     if (!isHealthy) {
       res.writeHead(503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'NOT_READY', node: config.NODE_ID }));
@@ -177,8 +185,24 @@ async function start() {
     eventSink,
     leaderPrep,
     preemptOnRecovery: config.PREEMPT_ON_RECOVERY,
+    onLeaderChange: (leaderId, isSelf) => {
+      if (isSelf) {
+        logger.info(`Node ${config.NODE_ID} assumed leadership. Starting Berkeley master periodic sync.`);
+        berkeleySync?.startPeriodicSync(10000);
+      } else {
+        logger.info(`Node ${config.NODE_ID} follower role. Stopping Berkeley master sync.`);
+        berkeleySync?.stopPeriodicSync();
+      }
+    },
   });
   electionManager.setEpoch(initEpoch);
+
+  failureDetector.setLeaderFailureHandler(async (downLeaderId) => {
+    if (!faultManager.isCrashed()) {
+      logger.warn(`Failure detector confirmed leader ${downLeaderId} DOWN. Initiating election failover...`);
+      await electionManager?.initiateElection('LEADER_TIMEOUT');
+    }
+  }, () => electionManager?.getLeaderId() ?? 0);
 
   replicator = new Replicator(pool, config.NODE_ID, clock, peerManager, failureDetector, config.CONSISTENCY_MODE);
   applier = new LogApplier(pool, config.NODE_ID, clock);
@@ -209,7 +233,7 @@ async function start() {
     getEventLoopLagMs: () => Math.round(lagMonitor.getP99Ms() * 100) / 100,
   };
 
-  heartbeatLoop = new HeartbeatLoop(peerManager, failureDetector, clock, stateProvider, 1000);
+  heartbeatLoop = new HeartbeatLoop(peerManager, failureDetector, clock, stateProvider, 1000, faultManager);
 
   const server = createGrpcServer({
     pool,
@@ -234,6 +258,7 @@ async function start() {
     eventSink,
     rpcTraceBuffer,
     berkeleySync,
+    faultManager,
   });
   grpcServer = server;
 
@@ -257,8 +282,10 @@ async function start() {
     electionManager?.initiateElection('COLD_START');
   }, 500);
 
-  // Start periodic Berkeley clock sync (leader will run sync rounds)
-  berkeleySync?.startPeriodicSync(10000);
+  // Start periodic Berkeley clock sync ONLY if leader
+  if (isLeader()) {
+    berkeleySync?.startPeriodicSync(10000);
+  }
 
   await eventSink.logEvent({
     service: 'bank-node',

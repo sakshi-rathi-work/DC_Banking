@@ -110,9 +110,23 @@ export class FailureDetector {
               details: { peerNodeId: nodeId, ageMs: age, timeoutMs: this.timeoutMs },
             });
           }
+
+          const currentLeaderId = this.getLeaderIdFn ? this.getLeaderIdFn() : 0;
+          if (nodeId === currentLeaderId && this.onLeaderFailureFn) {
+            logger.warn(`Leader Node ${nodeId} confirmed DOWN. Triggering election failover...`);
+            this.onLeaderFailureFn(nodeId);
+          }
         }
       }
     }
+  }
+
+  private onLeaderFailureFn?: (leaderId: number) => void;
+  private getLeaderIdFn?: () => number;
+
+  public setLeaderFailureHandler(handler: (leaderId: number) => void, getLeaderId: () => number): void {
+    this.onLeaderFailureFn = handler;
+    this.getLeaderIdFn = getLeaderId;
   }
 
 
